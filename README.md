@@ -46,6 +46,53 @@ I understand that in general this is strongly discouraged, however this is only 
 
 At this point, I successfully connected an embedded device to AWS via MQTT, logged data into PostgreSQL, and visualised data through a web interface. This demonstrates essential IoT and cloud integration principles.
 
-
-
 ---
+
+## Part 2: Sending sensor data to the Cloud using MQTT and Wi-Fi
+
+The first part was about establishing somewhere to store the data. Now, this second part is about going through the process of collecting and sending the data, which will be stored in the cloud.
+
+The embedded device software will be built which will periodically send sensor readings using the MQTT protocol - WiFi drivers and an MQTT library will need to be incorporated. A Real-Time Operating System (RTOS) needs to be used for the main processing loop, and the sensors need to be manually interfaced with.
+
+Enabling a 'global interrupt' is essential for this part. It stops the system when an event occurs, takes a specific action, and then returns to the current process.
+
+This part also uses the 'ISM433 component'. This allows for interfacing and interacting with the Wi-Fi network, allowing online correspondence between a web server and site.
+
+These need to be implemented so that the microcontroller can respond to new sensor readings in real time and upload them via Wi-Fi.
+
+### Steps taken
+
+- The first step is to create a new CMSIS solution in VSCode (on another VSCode window) and use the Blinky template as it already has the files needed for this project. 
+
+CMSIS solutions are used in IoT workflows because they give developers a standard, optimised, and portable way to program Arm-based microcontrollers - the tiny processors inside many IoT devices. They save time, improve performance, and make IoT software easier to scale across different hardware.
+
+- Once created, the board needs to be configured using STM32CubeMX as the SPI3 global interrupt needs to be enabled. Then, prompt CubeMX to generate the code.
+
+- Now, some additional packs to the solution needs to be added to bring in the required libraries. In the solution file 'Blinky.csolution.yml', the CMSIS Driver Pack and the coreMQTT pack is added, as well as a new definition to use the default configuration for MQTT.
+
+- In the CMSIS Driver component, the WiFi API and ISM43362 components need to be enabled which require the SPI component to be enabled too. Additionally, coreMQTT under FreeRTOS needs to be enabled.
+
+- Now it is time to edit the configuration for some of the components to connect them up to the right place. First, in the configuration header file of the WiFi driver, the SPI driver number needs to be 3 because the WiFi device on the board is connected to SPI bus number 3. Some code needs to be added to tell the driver how to reset and activate the WiFi device. In the hardware source code file, the GPIO_PINS for the Data ready pin, the Reset pin, and the Peripheral select pin needed to be initialised. Then, some more code was added to perform the reset and device selection functionality.
+
+- Now, the main program code is added in the 'Blinky.c' file. The idea of this program is that the device will connect to WiFi then open an MQTT connection to the server made in part 1, then read and transmit data from the sensors every 5 seconds.
+
+The file starts with definitions used to access the sensors. The sensors are connected to I2C bus number 2 and there are two that are of concern.
+
+The HTS221 sensor is for reading temperature and humidity. The HTS221_Init routine turns the device off, pauses for a moment, then turns the device on, configuring it for one-shot mode which means that the device can be triggered to take a reading. The sensor also contains calibration data which is prepared by the factory and used to calculate the actual temperature and humidity values.
+
+The read calibration routine reads out the calibration values from the device, does some basic arithmetic, and stores the values in global variables for use later. The trigger routine requests the sensor to take a reading, it issues the command, and then waits for the data to become available by polling the status register. The read temperature and read humidity routines then read the values out of the sensor, apply the calibration factor and return the results.
+
+The LPS22HB sensor measures pressure and the code is set up the same way as in the HTS221. The initialisation routine resets the device and the read pressure routine reads out the pressure data. This time, the trigger is built into the reading routine.
+
+Following the sensor code comes the code required to enable the MQTT library to speak to the onboard WiFi device. The MQTT library is generic and can work with a wide range of embedded platforms, so an interface needs to be provided to the particular device used here.
+
+The transport, receive, and send routines talk to the WiFi device to receive and send data over the network. The user callback is not used because topics aren't being subscribed to. The GetTime routine asks the RTOS for the current time, returning it in milliseconds since boot. 
+
+Now the main thread: first, the sensors are initialised. Next, the WiFi device is initalised and connected to an access point which is where my own WiFi credentials needs to be added. (hide this in the code later)
+After the WiFi connection is established, a connection to the MQTT broker is attempted. Here, the IP address in the code needs to be changed to the IP address of my broker which is found in the public address of my instance in the AWS console (also hide this in the code later).
+
+Next, the MQTT library is initialised by hooking up the transport routines and connecting through to the broker. 
+
+After all of this initialisation comes the main application loop. Here, the sensor data is read and then put into JSON format using the snprintf routine. Once the JSON payload has been constructed, it is published to the MQTT broker. Then there is a 5 second delay and the loop starts again.
+
+The solution can now be built and ran on the board. Opening the serial monitor will allow the relevant output to be seen. The board is now transmitting to the server, and if the two Python scripts are running (they should be on another VSCode Window), the web page created can be accessed and the real sensor data coming in from the device can be read.
